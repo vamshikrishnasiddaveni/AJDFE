@@ -321,6 +321,18 @@ th {
   color: #805300;
 }
 
+.reason {
+  display: block;
+  max-width: 260px;
+  margin-top: 6px;
+  color: #66757f;
+  white-space: normal;
+}
+
+.manual-link {
+  font-weight: 700;
+}
+
 .logs {
   height: 360px;
   margin: 0;

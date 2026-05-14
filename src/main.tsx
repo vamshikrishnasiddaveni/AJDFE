@@ -340,6 +340,7 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
                 <th>Company</th>
                 <th>Application</th>
                 <th>Automation</th>
+                <th>Help Link</th>
               </tr>
             </thead>
             <tbody>
@@ -354,6 +355,14 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
                     <span className={job.automationStatus === "fully_automatic" ? "badge ok" : "badge warn"}>
                       {statusLabel(job.automationStatus)}
                     </span>
+                    {job.errorMessage && <small className="reason">{job.errorMessage}</small>}
+                  </td>
+                  <td>
+                    {job.automationStatus === "needs_user_help" ? (
+                      <a className="manual-link" href={job.jobLink} target="_blank" rel="noreferrer">Open Job</a>
+                    ) : (
+                      <span className="muted">Done</span>
+                    )}
                   </td>
                 </tr>
               ))}
