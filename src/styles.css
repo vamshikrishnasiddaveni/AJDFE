@@ -263,7 +263,8 @@ a:hover {
   padding: 0 14px;
 }
 
-.actions button:nth-child(2) {
+.actions .selected,
+.actions .primary-action {
   background: #216b70;
   border-color: #216b70;
   color: #ffffff;
@@ -482,7 +483,38 @@ th {
   color: #d6e2e7;
   font-size: 12px;
   line-height: 1.55;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.log-line {
+  padding: 1px 0 1px 10px;
+  border-left: 3px solid transparent;
   white-space: pre-wrap;
+}
+
+.log-line.active {
+  border-left-color: #45b7c7;
+  color: #bcecf2;
+}
+
+.log-line.ok {
+  border-left-color: #5fc98d;
+  color: #c6f4d7;
+}
+
+.log-line.warn {
+  border-left-color: #e3b341;
+  color: #ffe1a3;
+}
+
+.log-line.error {
+  border-left-color: #e36b5d;
+  color: #ffc4bd;
+}
+
+.log-line.retry {
+  border-left-color: #9fa8ff;
+  color: #d8dcff;
 }
 
 @media (max-width: 900px) {

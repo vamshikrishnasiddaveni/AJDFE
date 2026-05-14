@@ -137,6 +137,30 @@ function statusLabel(value: string) {
   return value.replaceAll("_", " ");
 }
 
+function logLineClass(line: string) {
+  const normalized = line.toLowerCase();
+  if (normalized.includes("failed") || normalized.includes("error")) {
+    return "log-line error";
+  }
+  if (normalized.includes("needs user help") || normalized.includes("manual input")) {
+    return "log-line warn";
+  }
+  if (normalized.includes("retrying")) {
+    return "log-line retry";
+  }
+  if (normalized.includes("applying to")) {
+    return "log-line active";
+  }
+  if (normalized.includes("success") || normalized.includes("applied")) {
+    return "log-line ok";
+  }
+  return "log-line";
+}
+
+function isSubmittedApplication(job: AppliedJob) {
+  return job.applicationStatus.toLowerCase() === "submitted" || job.automationStatus === "fully_automatic";
+}
+
 function getApiErrorMessage(text: string, status: number, statusText: string) {
   if (!text) {
     return `${status} ${statusText}`;
@@ -288,6 +312,7 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
   const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
+  const [activeView, setActiveView] = useState<"dashboard" | "profile">("dashboard");
   const [profileForm, setProfileForm] = useState<ProfileForm>(() => toProfileForm(user));
   const [passwordForm, setPasswordForm] = useState<PasswordForm>(emptyPasswordForm);
   const [resumeFile, setResumeFile] = useState<File | null>(null);
@@ -300,6 +325,11 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
     () => applications.filter((job) => job.automationStatus === "needs_user_help").length,
     [applications]
   );
+  const appliedCount = useMemo(
+    () => applications.filter(isSubmittedApplication).length,
+    [applications]
+  );
+  const totalApplications = applications.length;
 
   const totalPages = Math.max(1, Math.ceil(applications.length / applicationsPerPage));
   const activePage = Math.min(currentPage, totalPages);
@@ -410,10 +440,23 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
   async function startBot() {
     setError("");
     try {
+      if (currentUser.logicalDelete === "Y") {
+        setError("This user is locked inactive and cannot start applying.");
+        return;
+      }
+
+      if (!currentUser.active) {
+        const activated = await request<UserProfile>(`/api/users/${currentUser.id}/active?active=true`, {
+          method: "PATCH",
+        });
+        setCurrentUser(activated);
+        localStorage.setItem(sessionKey, JSON.stringify(activated));
+      }
+
       setStatus(await request<BotStatus>(`/api/bot/start?userId=${currentUser.id}`, { method: "POST" }));
       await loadAll();
     } catch (startError) {
-      setError(startError instanceof Error ? startError.message : "Unable to start bot");
+      setError(startError instanceof Error ? startError.message : "Unable to start applying");
     }
   }
 
@@ -421,28 +464,16 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
     setError("");
     try {
       setStatus(await request<BotStatus>("/api/bot/stop", { method: "POST" }));
+      if (currentUser.active) {
+        const deactivated = await request<UserProfile>(`/api/users/${currentUser.id}/active?active=false`, {
+          method: "PATCH",
+        });
+        setCurrentUser(deactivated);
+        localStorage.setItem(sessionKey, JSON.stringify(deactivated));
+      }
       await loadAll();
     } catch (stopError) {
-      setError(stopError instanceof Error ? stopError.message : "Unable to stop bot");
-    }
-  }
-
-  async function toggleActive() {
-    setError("");
-    if (currentUser.logicalDelete === "Y") {
-      setError("This user is locked inactive and cannot change status.");
-      return;
-    }
-
-    try {
-      const updated = await request<UserProfile>(`/api/users/${currentUser.id}/active?active=${!currentUser.active}`, {
-        method: "PATCH",
-      });
-      setCurrentUser(updated);
-      localStorage.setItem(sessionKey, JSON.stringify(updated));
-      await loadAll();
-    } catch (toggleError) {
-      setError(toggleError instanceof Error ? toggleError.message : "Unable to update user");
+      setError(stopError instanceof Error ? stopError.message : "Unable to stop applying");
     }
   }
 
@@ -458,7 +489,7 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
 
   const eligible = currentUser.logicalDelete !== "Y";
   const effectiveActive = eligible && currentUser.active;
-  const statusButtonText = !eligible ? "Locked Inactive" : currentUser.active ? "Turn Off" : "Turn On";
+  const modeLabel = !eligible ? "No Access" : status?.running ? "Applying" : "On Hold";
 
   return (
     <main className="app-shell">
@@ -468,10 +499,14 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
           <p>{currentUser.firstName} {currentUser.lastName} · User ID {currentUser.id}</p>
         </div>
         <div className="actions">
+          <button className={activeView === "dashboard" ? "selected" : ""} type="button" onClick={() => setActiveView("dashboard")}>Dashboard</button>
+          <button className={activeView === "profile" ? "selected" : ""} type="button" onClick={() => setActiveView("profile")}>Profile</button>
           <button type="button" onClick={loadAll}>Refresh</button>
-          <button type="button" onClick={toggleActive} disabled={!eligible}>{statusButtonText}</button>
-          <button type="button" onClick={startBot} disabled={Boolean(status?.running) || !effectiveActive}>Start Bot</button>
-          <button type="button" onClick={stopBot} disabled={!status?.running}>Stop Bot</button>
+          {status?.running ? (
+            <button className="primary-action" type="button" onClick={stopBot}>Stop Applying</button>
+          ) : (
+            <button className="primary-action" type="button" onClick={startBot} disabled={!eligible}>Start Applying</button>
+          )}
           <button type="button" onClick={onLogout}>Logout</button>
         </div>
       </header>
@@ -481,155 +516,162 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
       {!eligible && <div className="alert">Your account is not eligible to use this tool.</div>}
       {loading && <div className="muted">Loading backend data...</div>}
 
-      <section className="metrics">
-        <div><span>Bot</span><strong>{status?.running ? "Running" : "Stopped"}</strong></div>
-        <div><span>Mode</span><strong>{status?.mode ? statusLabel(status.mode) : "Java Playwright"}</strong></div>
-        <div><span>Tool Access</span><strong>{eligible ? (currentUser.active ? "On" : "Off") : "Blocked"}</strong></div>
-        <div><span>Applied Jobs</span><strong>{applications.length}</strong></div>
-        <div><span>Needs Help</span><strong>{helpNeeded}</strong></div>
-      </section>
+      {activeView === "dashboard" ? (
+        <>
+          <section className="metrics">
+            <div><span>Mode</span><strong>{modeLabel}</strong></div>
+            <div><span>Total Applications</span><strong>{totalApplications}</strong></div>
+            <div><span>Applied Jobs</span><strong>{appliedCount}</strong></div>
+            <div><span>Needs Help</span><strong>{helpNeeded}</strong></div>
+          </section>
 
-      <section className="grid-two">
-        <div className="panel">
-          <div className="section-head">
-            <h2>Profile</h2>
-            <span>{effectiveActive ? "Active" : "Inactive"}</span>
-          </div>
-          <div className="detail-list">
-            <div><span>Name</span><strong>{currentUser.firstName} {currentUser.lastName}</strong></div>
-            <div><span>Mobile</span><strong>{currentUser.mobileNumber}</strong></div>
-            <div><span>Experience</span><strong>{currentUser.experienceYears}</strong></div>
-            <div><span>Current Location</span><strong>{currentUser.currentLocation || "Not set"}</strong></div>
-            <div><span>Preferred Location</span><strong>{currentUser.preferredLocation}</strong></div>
-            <div><span>Notice Period</span><strong>{currentUser.noticePeriod || "Not set"}</strong></div>
-            <div><span>Current Salary</span><strong>{currentUser.currentSalary || "Not set"}</strong></div>
-            <div><span>Expected Salary</span><strong>{currentUser.expectedSalary || "Not set"}</strong></div>
-            <div><span>Work Authorization</span><strong>{currentUser.workAuthorization || "Not set"}</strong></div>
-            <div><span>Sponsorship</span><strong>{currentUser.requiresSponsorship || "Not set"}</strong></div>
-          </div>
-        </div>
+          <section className="panel">
+            <div className="section-head">
+              <h2>Live Logs</h2>
+              <span>{status?.startedAt ? `Started ${new Date(status.startedAt).toLocaleTimeString()}` : status?.logFile ?? "logs/job-bot.log"}</span>
+            </div>
+            <div className="logs">
+              {logs.length ? logs.map((line, index) => (
+                <div className={logLineClass(line)} key={`${index}-${line}`}>{line}</div>
+              )) : <div className="log-line">No logs yet.</div>}
+            </div>
+          </section>
 
-        <div className="panel">
-          <div className="section-head">
-            <h2>Resume</h2>
-            <span>{resume?.exists ? "Uploaded" : "Missing"}</span>
-          </div>
-          <div className="resume-panel">
-            <div className="resume-status">
-              <span>Current Resume</span>
-              <strong>{resume?.exists ? resume.originalFileName : "No resume uploaded"}</strong>
-              {resume?.uploadedAt && <small>Uploaded {new Date(resume.uploadedAt).toLocaleString()}</small>}
+          <section className="panel">
+            <div className="section-head">
+              <h2>Applied Jobs</h2>
+              <span>
+                {applications.length
+                  ? `${pageStart + 1}-${Math.min(pageStart + applicationsPerPage, applications.length)} of ${applications.length}`
+                  : "0 jobs"}
+              </span>
+            </div>
+            <div className="table-wrap">
+              <table className="jobs-table">
+                <thead>
+                  <tr>
+                    <th>Company Name</th>
+                    <th>Role</th>
+                    <th>Link</th>
+                    <th>Status</th>
+                    <th>Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleApplications.map((job) => (
+                    <tr key={job.id}>
+                      <td>{job.company}</td>
+                      <td>{job.jobTitle}</td>
+                      <td><a href={job.jobLink} target="_blank" rel="noreferrer">Open Job</a></td>
+                      <td>
+                        <span className={isSubmittedApplication(job) ? "badge ok" : "badge warn"}>
+                          {statusLabel(job.applicationStatus)}
+                        </span>
+                      </td>
+                      <td>{new Date(job.appliedAt).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="pagination">
+              <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={activePage === 1}>
+                Previous
+              </button>
+              <span>Page {activePage} of {totalPages}</span>
+              <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={activePage === totalPages}>
+                Next
+              </button>
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <section className="grid-two">
+            <div className="panel">
+              <div className="section-head">
+                <h2>User Details</h2>
+                <span>{effectiveActive ? "Active" : "Inactive"}</span>
+              </div>
+              <div className="detail-list">
+                <div><span>Name</span><strong>{currentUser.firstName} {currentUser.lastName}</strong></div>
+                <div><span>Mobile</span><strong>{currentUser.mobileNumber}</strong></div>
+                <div><span>Experience</span><strong>{currentUser.experienceYears}</strong></div>
+                <div><span>Current Location</span><strong>{currentUser.currentLocation || "Not set"}</strong></div>
+                <div><span>Preferred Location</span><strong>{currentUser.preferredLocation}</strong></div>
+                <div><span>Notice Period</span><strong>{currentUser.noticePeriod || "Not set"}</strong></div>
+                <div><span>Current Salary</span><strong>{currentUser.currentSalary || "Not set"}</strong></div>
+                <div><span>Expected Salary</span><strong>{currentUser.expectedSalary || "Not set"}</strong></div>
+                <div><span>Work Authorization</span><strong>{currentUser.workAuthorization || "Not set"}</strong></div>
+                <div><span>Sponsorship</span><strong>{currentUser.requiresSponsorship || "Not set"}</strong></div>
+              </div>
             </div>
 
-            {resume?.parsedSummary && (
-              <div className="summary-list">
-                <div><span>Name</span><strong>{resume.parsedSummary.candidateName || "Not found"}</strong></div>
-                <div><span>Email</span><strong>{resume.parsedSummary.email || "Not found"}</strong></div>
-                <div><span>Phone</span><strong>{resume.parsedSummary.phone || "Not found"}</strong></div>
-                <div><span>Experience</span><strong>{resume.parsedSummary.totalExperience || "Not found"}</strong></div>
-                <div><span>Role</span><strong>{resume.parsedSummary.currentRole || "Not found"}</strong></div>
-                <div><span>Location</span><strong>{resume.parsedSummary.currentLocation || "Not found"}</strong></div>
+            <div className="panel">
+              <div className="section-head">
+                <h2>Resume</h2>
+                <span>{resume?.exists ? "Uploaded" : "Missing"}</span>
               </div>
-            )}
+              <div className="resume-panel">
+                <div className="resume-status">
+                  <span>Current Resume</span>
+                  <strong>{resume?.exists ? resume.originalFileName : "No resume uploaded"}</strong>
+                  {resume?.uploadedAt && <small>Uploaded {new Date(resume.uploadedAt).toLocaleString()}</small>}
+                </div>
 
-            <form className="upload-form" onSubmit={submitResume}>
-              <label>Upload New Resume<input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setResumeFile(event.target.files?.[0] ?? null)} /></label>
-              <button className="primary" type="submit" disabled={uploadingResume}>{uploadingResume ? "Uploading..." : "Upload Resume"}</button>
+                {resume?.parsedSummary && (
+                  <div className="summary-list">
+                    <div><span>Name</span><strong>{resume.parsedSummary.candidateName || "Not found"}</strong></div>
+                    <div><span>Email</span><strong>{resume.parsedSummary.email || "Not found"}</strong></div>
+                    <div><span>Phone</span><strong>{resume.parsedSummary.phone || "Not found"}</strong></div>
+                    <div><span>Experience</span><strong>{resume.parsedSummary.totalExperience || "Not found"}</strong></div>
+                    <div><span>Role</span><strong>{resume.parsedSummary.currentRole || "Not found"}</strong></div>
+                    <div><span>Location</span><strong>{resume.parsedSummary.currentLocation || "Not found"}</strong></div>
+                  </div>
+                )}
+
+                <form className="upload-form" onSubmit={submitResume}>
+                  <label>Upload New Resume<input type="file" accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" onChange={(event) => setResumeFile(event.target.files?.[0] ?? null)} /></label>
+                  <button className="primary" type="submit" disabled={uploadingResume}>{uploadingResume ? "Uploading..." : "Upload Resume"}</button>
+                </form>
+              </div>
+            </div>
+          </section>
+
+          <section className="panel">
+            <div className="section-head">
+              <h2>Update User Details</h2>
+              <span>Editable profile fields</span>
+            </div>
+            <form className="profile-form" onSubmit={saveProfile}>
+              <label>First Name<input required value={profileForm.firstName} onChange={(event) => updateProfileField("firstName", event.target.value)} /></label>
+              <label>Last Name<input required value={profileForm.lastName} onChange={(event) => updateProfileField("lastName", event.target.value)} /></label>
+              <label>Mobile<input required value={profileForm.mobileNumber} onChange={(event) => updateProfileField("mobileNumber", event.target.value)} /></label>
+              <label>Experience<input required value={profileForm.experienceYears} onChange={(event) => updateProfileField("experienceYears", event.target.value)} /></label>
+              <label>Current Salary<input value={profileForm.currentSalary} onChange={(event) => updateProfileField("currentSalary", event.target.value)} /></label>
+              <label>Expected Salary<input value={profileForm.expectedSalary} onChange={(event) => updateProfileField("expectedSalary", event.target.value)} /></label>
+              <label>Notice Period<input value={profileForm.noticePeriod} onChange={(event) => updateProfileField("noticePeriod", event.target.value)} /></label>
+              <label>Current Location<input value={profileForm.currentLocation} onChange={(event) => updateProfileField("currentLocation", event.target.value)} /></label>
+              <label>Preferred Location<input required value={profileForm.preferredLocation} onChange={(event) => updateProfileField("preferredLocation", event.target.value)} /></label>
+              <label>Work Authorization<input value={profileForm.workAuthorization} onChange={(event) => updateProfileField("workAuthorization", event.target.value)} /></label>
+              <label>Requires Sponsorship<input value={profileForm.requiresSponsorship} onChange={(event) => updateProfileField("requiresSponsorship", event.target.value)} /></label>
+              <button className="primary" type="submit" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save User Details"}</button>
             </form>
-          </div>
-        </div>
-      </section>
+          </section>
 
-      <section className="panel">
-        <div className="section-head">
-          <h2>Update User Details</h2>
-          <span>Editable profile fields</span>
-        </div>
-        <form className="profile-form" onSubmit={saveProfile}>
-          <label>First Name<input required value={profileForm.firstName} onChange={(event) => updateProfileField("firstName", event.target.value)} /></label>
-          <label>Last Name<input required value={profileForm.lastName} onChange={(event) => updateProfileField("lastName", event.target.value)} /></label>
-          <label>Mobile<input required value={profileForm.mobileNumber} onChange={(event) => updateProfileField("mobileNumber", event.target.value)} /></label>
-          <label>Experience<input required value={profileForm.experienceYears} onChange={(event) => updateProfileField("experienceYears", event.target.value)} /></label>
-          <label>Current Salary<input value={profileForm.currentSalary} onChange={(event) => updateProfileField("currentSalary", event.target.value)} /></label>
-          <label>Expected Salary<input value={profileForm.expectedSalary} onChange={(event) => updateProfileField("expectedSalary", event.target.value)} /></label>
-          <label>Notice Period<input value={profileForm.noticePeriod} onChange={(event) => updateProfileField("noticePeriod", event.target.value)} /></label>
-          <label>Current Location<input value={profileForm.currentLocation} onChange={(event) => updateProfileField("currentLocation", event.target.value)} /></label>
-          <label>Preferred Location<input required value={profileForm.preferredLocation} onChange={(event) => updateProfileField("preferredLocation", event.target.value)} /></label>
-          <label>Work Authorization<input value={profileForm.workAuthorization} onChange={(event) => updateProfileField("workAuthorization", event.target.value)} /></label>
-          <label>Requires Sponsorship<input value={profileForm.requiresSponsorship} onChange={(event) => updateProfileField("requiresSponsorship", event.target.value)} /></label>
-          <button className="primary" type="submit" disabled={savingProfile}>{savingProfile ? "Saving..." : "Save User Details"}</button>
-        </form>
-      </section>
-
-      <section className="grid-two utility-grid">
-        <div className="panel">
-          <div className="section-head">
-            <h2>Password</h2>
-            <span>Secure update</span>
-          </div>
-          <form className="password-form" onSubmit={changePassword}>
-            <label>Current Password<input required type="password" value={passwordForm.currentPassword} onChange={(event) => updatePasswordField("currentPassword", event.target.value)} /></label>
-            <label>New Password<input required minLength={6} type="password" value={passwordForm.newPassword} onChange={(event) => updatePasswordField("newPassword", event.target.value)} /></label>
-            <button className="primary" type="submit" disabled={changingPassword}>{changingPassword ? "Changing..." : "Change Password"}</button>
-          </form>
-        </div>
-
-        <div className="panel">
-          <div className="section-head">
-            <h2>Live Logs</h2>
-            <span>{status?.startedAt ? `Started ${new Date(status.startedAt).toLocaleTimeString()}` : status?.logFile ?? "logs/job-bot.log"}</span>
-          </div>
-          <pre className="logs">{logs.join("\n") || "No logs yet."}</pre>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="section-head">
-          <h2>Applied Jobs</h2>
-          <span>
-            {applications.length
-              ? `${pageStart + 1}-${Math.min(pageStart + applicationsPerPage, applications.length)} of ${applications.length}`
-              : "0 jobs"}
-          </span>
-        </div>
-        <div className="table-wrap">
-          <table className="jobs-table">
-            <thead>
-              <tr>
-                <th>Company Name</th>
-                <th>Role</th>
-                <th>Link</th>
-                <th>Status</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleApplications.map((job) => (
-                <tr key={job.id}>
-                  <td>{job.company}</td>
-                  <td>{job.jobTitle}</td>
-                  <td><a href={job.jobLink} target="_blank" rel="noreferrer">Open Job</a></td>
-                  <td>
-                    <span className={job.applicationStatus === "applied" ? "badge ok" : "badge warn"}>
-                      {statusLabel(job.applicationStatus)}
-                    </span>
-                  </td>
-                  <td>{new Date(job.appliedAt).toLocaleDateString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        <div className="pagination">
-          <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={activePage === 1}>
-            Previous
-          </button>
-          <span>Page {activePage} of {totalPages}</span>
-          <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={activePage === totalPages}>
-            Next
-          </button>
-        </div>
-      </section>
+          <section className="panel">
+            <div className="section-head">
+              <h2>Password</h2>
+              <span>Secure update</span>
+            </div>
+            <form className="password-form" onSubmit={changePassword}>
+              <label>Current Password<input required type="password" value={passwordForm.currentPassword} onChange={(event) => updatePasswordField("currentPassword", event.target.value)} /></label>
+              <label>New Password<input required minLength={6} type="password" value={passwordForm.newPassword} onChange={(event) => updatePasswordField("newPassword", event.target.value)} /></label>
+              <button className="primary" type="submit" disabled={changingPassword}>{changingPassword ? "Changing..." : "Change Password"}</button>
+            </form>
+          </section>
+        </>
+      )}
     </main>
   );
 }
