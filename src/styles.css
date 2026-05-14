@@ -24,6 +24,12 @@ input {
   font: inherit;
 }
 
+input[type="file"] {
+  min-height: auto;
+  padding: 8px 10px;
+  background: #ffffff;
+}
+
 button {
   min-height: 36px;
   border: 1px solid #b8c5cc;
@@ -107,6 +113,91 @@ a:hover {
 
 .auth-form .primary {
   grid-column: 1 / -1;
+}
+
+.profile-form,
+.password-form,
+.upload-form {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.profile-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-form label,
+.password-form label,
+.upload-form label {
+  display: grid;
+  gap: 6px;
+  color: #66757f;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.profile-form .primary {
+  grid-column: 1 / -1;
+}
+
+.password-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.password-form .primary,
+.upload-form .primary {
+  justify-self: start;
+  padding: 0 14px;
+}
+
+.resume-panel {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.resume-status {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e8eef1;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.resume-status span,
+.summary-list span {
+  color: #66757f;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.resume-status strong,
+.summary-list strong {
+  overflow-wrap: anywhere;
+}
+
+.resume-status small {
+  color: #66757f;
+}
+
+.summary-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-list div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid #e8eef1;
+  border-radius: 6px;
+  padding: 12px;
+}
+
+.utility-grid {
+  grid-template-columns: minmax(320px, 0.65fr) minmax(0, 1fr);
 }
 
 .detail-list {
@@ -248,6 +339,7 @@ a:hover {
   border-radius: 8px;
   background: #ffffff;
   overflow: hidden;
+  margin-bottom: 16px;
 }
 
 .section-head {
@@ -409,6 +501,12 @@ th {
 
   .metrics,
   .grid-two {
+    grid-template-columns: 1fr;
+  }
+
+  .profile-form,
+  .password-form,
+  .summary-list {
     grid-template-columns: 1fr;
   }
 
