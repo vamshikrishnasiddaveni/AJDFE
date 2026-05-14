@@ -4,6 +4,7 @@ import "./styles.css";
 
 const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8080";
 const sessionKey = "jobapplying-user";
+const applicationsPerPage = 10;
 
 type UserProfile = {
   id: number;
@@ -80,6 +81,20 @@ function statusLabel(value: string) {
   return value.replaceAll("_", " ");
 }
 
+function getApiErrorMessage(text: string, status: number, statusText: string) {
+  if (!text) {
+    return `${status} ${statusText}`;
+  }
+
+  try {
+    const body = JSON.parse(text) as { error?: string; message?: string; trace?: string };
+    const traceMessage = body.trace?.match(/\d{3} [A-Z_]+ "([^"]+)"/)?.[1];
+    return body.message || traceMessage || body.error || `${status} ${statusText}`;
+  } catch {
+    return text;
+  }
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     headers: { "Content-Type": "application/json" },
@@ -88,7 +103,7 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(text || `${response.status} ${response.statusText}`);
+    throw new Error(getApiErrorMessage(text, response.status, response.statusText));
   }
 
   return response.json() as Promise<T>;
@@ -197,11 +212,17 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
   const [logs, setLogs] = useState<string[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const helpNeeded = useMemo(
     () => applications.filter((job) => job.automationStatus === "needs_user_help").length,
     [applications]
   );
+
+  const totalPages = Math.max(1, Math.ceil(applications.length / applicationsPerPage));
+  const activePage = Math.min(currentPage, totalPages);
+  const pageStart = (activePage - 1) * applicationsPerPage;
+  const visibleApplications = applications.slice(pageStart, pageStart + applicationsPerPage);
 
   async function loadAll() {
     setError("");
@@ -269,6 +290,10 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    setCurrentPage((page) => Math.min(page, totalPages));
+  }, [totalPages]);
+
   const eligible = currentUser.logicalDelete !== "Y";
   const effectiveActive = eligible && currentUser.active;
   const statusButtonText = !eligible ? "Locked Inactive" : currentUser.active ? "Turn Off" : "Turn On";
@@ -328,46 +353,48 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
       <section className="panel">
         <div className="section-head">
           <h2>Applied Jobs</h2>
-          <span>{applications.length} latest</span>
+          <span>
+            {applications.length
+              ? `${pageStart + 1}-${Math.min(pageStart + applicationsPerPage, applications.length)} of ${applications.length}`
+              : "0 jobs"}
+          </span>
         </div>
         <div className="table-wrap">
-          <table>
+          <table className="jobs-table">
             <thead>
               <tr>
-                <th>Date</th>
-                <th>User ID</th>
+                <th>Company Name</th>
                 <th>Role</th>
-                <th>Company</th>
-                <th>Application</th>
-                <th>Automation</th>
-                <th>Help Link</th>
+                <th>Link</th>
+                <th>Status</th>
+                <th>Date</th>
               </tr>
             </thead>
             <tbody>
-              {applications.map((job) => (
+              {visibleApplications.map((job) => (
                 <tr key={job.id}>
-                  <td>{new Date(job.appliedAt).toLocaleString()}</td>
-                  <td>{job.userId}</td>
-                  <td><a href={job.jobLink} target="_blank" rel="noreferrer">{job.jobTitle}</a></td>
                   <td>{job.company}</td>
-                  <td>{statusLabel(job.applicationStatus)}</td>
+                  <td>{job.jobTitle}</td>
+                  <td><a href={job.jobLink} target="_blank" rel="noreferrer">Open Job</a></td>
                   <td>
-                    <span className={job.automationStatus === "fully_automatic" ? "badge ok" : "badge warn"}>
-                      {statusLabel(job.automationStatus)}
+                    <span className={job.applicationStatus === "applied" ? "badge ok" : "badge warn"}>
+                      {statusLabel(job.applicationStatus)}
                     </span>
-                    {job.errorMessage && <small className="reason">{job.errorMessage}</small>}
                   </td>
-                  <td>
-                    {job.automationStatus === "needs_user_help" ? (
-                      <a className="manual-link" href={job.jobLink} target="_blank" rel="noreferrer">Open Job</a>
-                    ) : (
-                      <span className="muted">Done</span>
-                    )}
-                  </td>
+                  <td>{new Date(job.appliedAt).toLocaleDateString()}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="pagination">
+          <button type="button" onClick={() => setCurrentPage((page) => Math.max(1, page - 1))} disabled={activePage === 1}>
+            Previous
+          </button>
+          <span>Page {activePage} of {totalPages}</span>
+          <button type="button" onClick={() => setCurrentPage((page) => Math.min(totalPages, page + 1))} disabled={activePage === totalPages}>
+            Next
+          </button>
         </div>
       </section>
     </main>
