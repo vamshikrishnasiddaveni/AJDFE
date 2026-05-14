@@ -55,6 +55,8 @@ type AppliedJob = {
 type BotStatus = {
   running: boolean;
   pid?: number | null;
+  mode?: string;
+  startedAt?: string | null;
   logFile: string;
   checkedAt: string;
 };
@@ -293,6 +295,7 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
 
       <section className="metrics">
         <div><span>Bot</span><strong>{status?.running ? "Running" : "Stopped"}</strong></div>
+        <div><span>Mode</span><strong>{status?.mode ? statusLabel(status.mode) : "Java Playwright"}</strong></div>
         <div><span>Tool Access</span><strong>{eligible ? (currentUser.active ? "On" : "Off") : "Blocked"}</strong></div>
         <div><span>Applied Jobs</span><strong>{applications.length}</strong></div>
         <div><span>Needs Help</span><strong>{helpNeeded}</strong></div>
@@ -316,7 +319,7 @@ function Dashboard({ user, onLogout }: { user: UserProfile; onLogout: () => void
         <div className="panel">
           <div className="section-head">
             <h2>Live Logs</h2>
-            <span>{status?.logFile ?? "logs/job-bot.log"}</span>
+            <span>{status?.startedAt ? `Started ${new Date(status.startedAt).toLocaleTimeString()}` : status?.logFile ?? "logs/job-bot.log"}</span>
           </div>
           <pre className="logs">{logs.join("\n") || "No logs yet."}</pre>
         </div>
